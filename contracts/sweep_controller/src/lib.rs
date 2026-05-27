@@ -30,17 +30,16 @@ impl SweepController {
         env: Env,
         authorized_signer: BytesN<32>,
         authorized_destination: Option<Address>,
+        creator: Address,
     ) -> Result<(), Error> {
         // Check if already initialized
         if storage::get_authorized_signer(&env).is_some() {
             return Err(Error::AuthorizationFailed);
         }
 
-        // Store the creator address
-        // In Soroban SDK 22.0.0, we need to pass creator as a parameter
-        // For now, we'll use the contract address as a placeholder
-        // TODO: Update to accept creator as parameter if needed
-        let creator = env.current_contract_address();
+    
+       // Verify and store the creator address
+        creator.require_auth();
         storage::set_creator(&env, &creator);
 
         // Store the authorized signer public key
