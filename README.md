@@ -110,7 +110,7 @@ pub trait EphemeralAccountInterface {
     fn record_payment(env: Env, amount: i128, asset: Address) -> Result<(), Error>;
     
     // Execute sweep to permanent wallet
-    fn sweep(env: Env, destination: Address) -> Result<(), Error>;
+    fn sweep(env: Env, destination: Address, auth_signature: BytesN<64>) -> Result<(), Error>;
     
     // Check if account is expired
     fn is_expired(env: Env) -> bool;
