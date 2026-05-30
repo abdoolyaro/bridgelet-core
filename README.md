@@ -33,6 +33,13 @@ Handles fund transfers:
 - Handles multi-asset transfers
 - Reclaims base reserves
 
+### 3. ReserveContract
+Stores and exposes the Stellar base reserve configuration:
+- Admin-controlled base reserve amount (stored in stroops)
+- Distinguishes user funds from network overhead in ephemeral accounts
+- TTL management to prevent contract data archival
+- Event emission for reserve updates and auditability
+
 ## Project Structure
 
 contracts/
@@ -47,13 +54,22 @@ contracts/
 │   ├── src/
 │   │   ├── lib.rs
 │   │   ├── authorization.rs
-│   │   └── transfers.rs
+│   │   ├── transfers.rs
 │   │   ├── storage.rs       # State management
 │   │   └── errors.rs        # Error types
 │   └── Cargo.toml
+├── reserve_contract/        # ← NEW
+│   ├── src/
+│   │   ├── lib.rs           # Main contract
+│   │   ├── storage.rs       # State management
+│   │   ├── events.rs        # Event definitions
+│   │   └── errors.rs        # Error types
+│   └── Cargo.toml
 └── shared/
-└── types.rs             # Shared types
-
+    ├── src/
+    │   ├── lib.rs
+    │   └── types.rs
+    └── Cargo.toml
 ## Prerequisites
 ```bash
 # Install Rust
