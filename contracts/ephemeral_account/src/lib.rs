@@ -357,9 +357,12 @@ impl EphemeralAccountContract {
         _destination: &Address,
         _signature: &BytesN<64>,
     ) -> Result<(), Error> {
-        // TODO: Implement proper signature verification
-        // For MVP, we rely on off-chain SDK to only call with valid auth
-        // Future: Verify signature against authorized signer
+        // ⚠️ MVP STUB: Signature verification is NOT enforced on-chain in this contract.
+        // Calling EphemeralAccount::sweep() directly bypasses all authorization checks.
+        // Authorization is only enforced when going through SweepController, which
+        // performs Ed25519 signature verification via authorization.rs.
+        // TODO: Implement on-chain signature verification against an authorized signer
+        // before production use.
         Ok(())
     }
 

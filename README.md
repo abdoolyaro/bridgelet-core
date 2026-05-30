@@ -110,13 +110,16 @@ pub trait EphemeralAccountInterface {
     fn record_payment(env: Env, amount: i128, asset: Address) -> Result<(), Error>;
     
     // Execute sweep to permanent wallet
-    fn sweep(env: Env, destination: Address) -> Result<(), Error>;
+    fn sweep(env: Env, destination: Address, auth_signature: BytesN<64>) -> Result<(), Error>;
     
     // Check if account is expired
     fn is_expired(env: Env) -> bool;
 }
 ```
-> **⚠️ MVP:**  **authorization is not yet enforced on-chain.
+> **⚠️ MVP:** On-chain authorization is not enforced at the `EphemeralAccount` contract
+> level. Calling `EphemeralAccount::sweep()` directly bypasses all signature verification.
+> Authorization is only enforced when sweeps are routed through `SweepController`.
+> Do not call `EphemeralAccount::sweep()` directly in production.
 
 See [Bridgelet Documentation](https://github.com/bridgelet-org/bridgelet) for full API reference.
 
