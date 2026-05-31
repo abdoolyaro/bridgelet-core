@@ -6,6 +6,7 @@ mod test {
         storage, AccountStatus, EphemeralAccountContract, EphemeralAccountContractClient,
         ReserveReclaimed,
     };
+    use claim_verifier::ClaimVerifierContract;
     use soroban_sdk::{testutils::Address as _, Address, BytesN, Env};
 
     const BASE_RESERVE_STROOPS: i128 = 1_000_000_000;
@@ -14,6 +15,29 @@ mod test {
         client
             .get_last_reserve_event()
             .expect("reserve event was not emitted")
+    }
+
+    fn register_claim_verifier(env: &Env) -> Address {
+        let contract_id = env.register(ClaimVerifierContract, ());
+        contract_id
+    }
+
+    fn initialize_ephemeral_account(
+        env: &Env,
+        client: &EphemeralAccountContractClient,
+        creator: &Address,
+        expiry_ledger: u32,
+        recovery: &Address,
+        claim_verifier_address: &Address,
+    ) {
+        let native_transfer_address = Address::generate(env);
+        client.initialize(
+            creator,
+            &expiry_ledger,
+            recovery,
+            &native_transfer_address,
+            claim_verifier_address,
+        );
     }
 
     #[test]
@@ -27,8 +51,9 @@ mod test {
         let creator = Address::generate(&env);
         let recovery = Address::generate(&env);
         let expiry_ledger = env.ledger().sequence() + 1000;
+        let claim_verifier_address = register_claim_verifier(&env);
 
-        client.initialize(&creator, &expiry_ledger, &recovery);
+        initialize_ephemeral_account(&env, &client, &creator, expiry_ledger, &recovery, &claim_verifier_address);
 
         assert_eq!(client.get_status(), AccountStatus::Active);
         assert!(!client.is_expired());
@@ -49,8 +74,9 @@ mod test {
         let recovery = Address::generate(&env);
         let asset = Address::generate(&env);
         let expiry_ledger = env.ledger().sequence() + 1000;
+        let claim_verifier_address = register_claim_verifier(&env);
 
-        client.initialize(&creator, &expiry_ledger, &recovery);
+        initialize_ephemeral_account(&env, &client, &creator, expiry_ledger, &recovery, &claim_verifier_address);
         client.record_payment(&100, &asset);
 
         assert_eq!(client.get_status(), AccountStatus::PaymentReceived);
@@ -69,8 +95,9 @@ mod test {
         let asset1 = Address::generate(&env);
         let asset2 = Address::generate(&env);
         let expiry_ledger = env.ledger().sequence() + 1000;
+        let claim_verifier_address = register_claim_verifier(&env);
 
-        client.initialize(&creator, &expiry_ledger, &recovery);
+        initialize_ephemeral_account(&env, &client, &creator, expiry_ledger, &recovery, &claim_verifier_address);
 
         client.record_payment(&100, &asset1);
         let info = client.get_info();
@@ -96,8 +123,9 @@ mod test {
         let asset = Address::generate(&env);
         let destination = Address::generate(&env);
         let expiry_ledger = env.ledger().sequence() + 1000;
+        let claim_verifier_address = register_claim_verifier(&env);
 
-        client.initialize(&creator, &expiry_ledger, &recovery);
+        initialize_ephemeral_account(&env, &client, &creator, expiry_ledger, &recovery, &claim_verifier_address);
         client.record_payment(&100, &asset);
 
         let auth_sig = BytesN::from_array(&env, &[0u8; 64]);
@@ -117,6 +145,33 @@ mod test {
     }
 
     #[test]
+    fn test_sweep_rejected_with_invalid_signature() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let contract_id = env.register(EphemeralAccountContract, ());
+        let client = EphemeralAccountContractClient::new(&env, &contract_id);
+
+        let creator = Address::generate(&env);
+        let recovery = Address::generate(&env);
+        let destination = Address::generate(&env);
+        let expiry_ledger = env.ledger().sequence() + 1000;
+        let claim_verifier_address = register_claim_verifier(&env);
+
+        initialize_ephemeral_account(&env, &client, &creator, expiry_ledger, &recovery, &claim_verifier_address);
+        let asset = Address::generate(&env);
+        client.record_payment(&100, &asset);
+
+        let auth_sig = BytesN::from_array(&env, &[1u8; 64]);
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            client.sweep(&destination, &auth_sig);
+        }));
+
+        assert!(result.is_err());
+        assert_eq!(client.get_status(), AccountStatus::PaymentReceived);
+    }
+
+    #[test]
     #[should_panic(expected = "Error(Contract, #13)")]
     fn test_duplicate_asset() {
         let env = Env::default();
@@ -128,8 +183,9 @@ mod test {
         let recovery = Address::generate(&env);
         let asset = Address::generate(&env);
         let expiry_ledger = env.ledger().sequence() + 1000;
+        let claim_verifier_address = register_claim_verifier(&env);
 
-        client.initialize(&creator, &expiry_ledger, &recovery);
+        initialize_ephemeral_account(&env, &client, &creator, expiry_ledger, &recovery, &claim_verifier_address);
         client.record_payment(&100, &asset);
         client.record_payment(&50, &asset);
     }
@@ -145,8 +201,9 @@ mod test {
         let creator = Address::generate(&env);
         let recovery = Address::generate(&env);
         let expiry_ledger = env.ledger().sequence() + 1000;
+        let claim_verifier_address = register_claim_verifier(&env);
 
-        client.initialize(&creator, &expiry_ledger, &recovery);
+        initialize_ephemeral_account(&env, &client, &creator, expiry_ledger, &recovery, &claim_verifier_address);
 
         for i in 0..10 {
             let asset = Address::generate(&env);
@@ -169,8 +226,9 @@ mod test {
         let recovery = Address::generate(&env);
         let destination = Address::generate(&env);
         let expiry_ledger = env.ledger().sequence() + 1000;
+        let claim_verifier_address = register_claim_verifier(&env);
 
-        client.initialize(&creator, &expiry_ledger, &recovery);
+        initialize_ephemeral_account(&env, &client, &creator, expiry_ledger, &recovery, &claim_verifier_address);
 
         let asset1 = Address::generate(&env);
         let asset2 = Address::generate(&env);
@@ -205,8 +263,9 @@ mod test {
         let destination = Address::generate(&env);
         let asset = Address::generate(&env);
         let expiry_ledger = env.ledger().sequence() + 1000;
+        let claim_verifier_address = register_claim_verifier(&env);
 
-        client.initialize(&creator, &expiry_ledger, &recovery);
+        initialize_ephemeral_account(&env, &client, &creator, expiry_ledger, &recovery, &claim_verifier_address);
         client.record_payment(&100, &asset);
 
         let auth_sig = BytesN::from_array(&env, &[0u8; 64]);
@@ -240,8 +299,9 @@ mod test {
         let destination = Address::generate(&env);
         let asset = Address::generate(&env);
         let expiry_ledger = env.ledger().sequence() + 1000;
+        let claim_verifier_address = register_claim_verifier(&env);
 
-        client.initialize(&creator, &expiry_ledger, &recovery);
+        initialize_ephemeral_account(&env, &client, &creator, expiry_ledger, &recovery, &claim_verifier_address);
         client.record_payment(&100, &asset);
 
         let initial_available = 250_000_000i128;
@@ -296,8 +356,9 @@ mod test {
         let destination = Address::generate(&env);
         let asset = Address::generate(&env);
         let expiry_ledger = env.ledger().sequence() + 1000;
+        let claim_verifier_address = register_claim_verifier(&env);
 
-        client.initialize(&creator, &expiry_ledger, &recovery);
+        initialize_ephemeral_account(&env, &client, &creator, expiry_ledger, &recovery, &claim_verifier_address);
         client.record_payment(&100, &asset);
 
         let auth_sig = BytesN::from_array(&env, &[0u8; 64]);
