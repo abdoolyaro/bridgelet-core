@@ -6,14 +6,96 @@ mod test {
         storage, AccountStatus, EphemeralAccountContract, EphemeralAccountContractClient,
         ReserveReclaimed,
     };
-    use soroban_sdk::{testutils::Address as _, Address, BytesN, Env};
+    use claim_verifier::{ClaimVerifierContract, ClaimVerifierContractClient};
+    use ed25519_dalek::{Signer, SigningKey};
+    use native_transfer::{NativeTransferContract, NativeTransferContractClient};
+    use soroban_sdk::{
+        testutils::Address as _, token::StellarAssetClient, xdr::ToXdr, Address, Bytes, BytesN, Env,
+    };
 
     const BASE_RESERVE_STROOPS: i128 = 1_000_000_000;
+
+    struct NativeTransferSetup {
+        nt_address: Address,
+        token_address: Address,
+    }
+
+    fn setup_native_transfer(
+        env: &Env,
+        contract_id: &Address,
+        amount: i128,
+    ) -> NativeTransferSetup {
+        let token_admin = Address::generate(env);
+        let token = env.register_stellar_asset_contract_v2(token_admin);
+        StellarAssetClient::new(env, &token.address()).mint(contract_id, &amount);
+
+        let nt_id = env.register(NativeTransferContract, ());
+        NativeTransferContractClient::new(env, &nt_id).initialize(&token.address());
+
+        NativeTransferSetup {
+            nt_address: nt_id,
+            token_address: token.address(),
+        }
+    }
 
     fn latest_reserve_event(client: &EphemeralAccountContractClient) -> ReserveReclaimed {
         client
             .get_last_reserve_event()
             .expect("reserve event was not emitted")
+    }
+
+    fn test_signing_key() -> SigningKey {
+        SigningKey::from_bytes(&[7u8; 32])
+    }
+
+    fn register_claim_verifier(env: &Env) -> Address {
+        let contract_id = env.register(ClaimVerifierContract, ());
+        let client = ClaimVerifierContractClient::new(env, &contract_id);
+        let signing_key = test_signing_key();
+        let public_key = BytesN::from_array(env, &signing_key.verifying_key().to_bytes());
+        client.initialize(&public_key);
+        contract_id
+    }
+
+    fn sign_sweep_authorization(
+        env: &Env,
+        claim_verifier_address: &Address,
+        destination: &Address,
+    ) -> BytesN<64> {
+        let nonce = env.ledger().sequence() as u64;
+        let mut message = Bytes::new(env);
+        message.append(&destination.to_xdr(env));
+        message.push_back(((nonce >> 56) & 0xFF) as u8);
+        message.push_back(((nonce >> 48) & 0xFF) as u8);
+        message.push_back(((nonce >> 40) & 0xFF) as u8);
+        message.push_back(((nonce >> 32) & 0xFF) as u8);
+        message.push_back(((nonce >> 24) & 0xFF) as u8);
+        message.push_back(((nonce >> 16) & 0xFF) as u8);
+        message.push_back(((nonce >> 8) & 0xFF) as u8);
+        message.push_back((nonce & 0xFF) as u8);
+        message.append(&claim_verifier_address.to_xdr(env));
+
+        let digest: BytesN<32> = env.crypto().sha256(&message).into();
+        let signature = test_signing_key().sign(&digest.to_array()).to_bytes();
+        BytesN::from_array(env, &signature)
+    }
+
+    fn initialize_ephemeral_account(
+        env: &Env,
+        client: &EphemeralAccountContractClient,
+        creator: &Address,
+        expiry_ledger: u32,
+        recovery: &Address,
+        native_transfer_address: &Address,
+        claim_verifier_address: &Address,
+    ) {
+        client.initialize(
+            creator,
+            &expiry_ledger,
+            recovery,
+            &native_transfer_address,
+            claim_verifier_address,
+        );
     }
 
     #[test]
@@ -27,8 +109,18 @@ mod test {
         let creator = Address::generate(&env);
         let recovery = Address::generate(&env);
         let expiry_ledger = env.ledger().sequence() + 1000;
+        let claim_verifier_address = register_claim_verifier(&env);
+        let setup = setup_native_transfer(&env, &contract_id, BASE_RESERVE_STROOPS);
 
-        client.initialize(&creator, &expiry_ledger, &recovery);
+        initialize_ephemeral_account(
+            &env,
+            &client,
+            &creator,
+            expiry_ledger,
+            &recovery,
+            &claim_verifier_address,
+            &setup.nt_address,
+        );
 
         assert_eq!(client.get_status(), AccountStatus::Active);
         assert!(!client.is_expired());
@@ -49,8 +141,18 @@ mod test {
         let recovery = Address::generate(&env);
         let asset = Address::generate(&env);
         let expiry_ledger = env.ledger().sequence() + 1000;
+        let claim_verifier_address = register_claim_verifier(&env);
+        let setup = setup_native_transfer(&env, &contract_id, BASE_RESERVE_STROOPS);
 
-        client.initialize(&creator, &expiry_ledger, &recovery);
+        initialize_ephemeral_account(
+            &env,
+            &client,
+            &creator,
+            expiry_ledger,
+            &recovery,
+            &claim_verifier_address,
+            &setup.nt_address,
+        );
         client.record_payment(&100, &asset);
 
         assert_eq!(client.get_status(), AccountStatus::PaymentReceived);
@@ -69,8 +171,18 @@ mod test {
         let asset1 = Address::generate(&env);
         let asset2 = Address::generate(&env);
         let expiry_ledger = env.ledger().sequence() + 1000;
+        let claim_verifier_address = register_claim_verifier(&env);
+        let setup = setup_native_transfer(&env, &contract_id, BASE_RESERVE_STROOPS);
 
-        client.initialize(&creator, &expiry_ledger, &recovery);
+        initialize_ephemeral_account(
+            &env,
+            &client,
+            &creator,
+            expiry_ledger,
+            &recovery,
+            &claim_verifier_address,
+            &setup.nt_address,
+        );
 
         client.record_payment(&100, &asset1);
         let info = client.get_info();
@@ -96,11 +208,21 @@ mod test {
         let asset = Address::generate(&env);
         let destination = Address::generate(&env);
         let expiry_ledger = env.ledger().sequence() + 1000;
+        let claim_verifier_address = register_claim_verifier(&env);
+        let setup = setup_native_transfer(&env, &contract_id, BASE_RESERVE_STROOPS);
 
-        client.initialize(&creator, &expiry_ledger, &recovery);
+        initialize_ephemeral_account(
+            &env,
+            &client,
+            &creator,
+            expiry_ledger,
+            &recovery,
+            &claim_verifier_address,
+            &setup.nt_address,
+        );
         client.record_payment(&100, &asset);
 
-        let auth_sig = BytesN::from_array(&env, &[0u8; 64]);
+        let auth_sig = sign_sweep_authorization(&env, &claim_verifier_address, &destination);
         client.sweep(&destination, &auth_sig);
 
         assert_eq!(client.get_status(), AccountStatus::Swept);
@@ -117,6 +239,41 @@ mod test {
     }
 
     #[test]
+    fn test_sweep_rejected_with_invalid_signature() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let contract_id = env.register(EphemeralAccountContract, ());
+        let client = EphemeralAccountContractClient::new(&env, &contract_id);
+
+        let creator = Address::generate(&env);
+        let recovery = Address::generate(&env);
+        let destination = Address::generate(&env);
+        let expiry_ledger = env.ledger().sequence() + 1000;
+        let claim_verifier_address = register_claim_verifier(&env);
+
+        initialize_ephemeral_account(
+            &env,
+            &client,
+            &creator,
+            expiry_ledger,
+            &recovery,
+            &Address::generate(&env),
+            &claim_verifier_address,
+        );
+        let asset = Address::generate(&env);
+        client.record_payment(&100, &asset);
+
+        let auth_sig = BytesN::from_array(&env, &[1u8; 64]);
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            client.sweep(&destination, &auth_sig);
+        }));
+
+        assert!(result.is_err());
+        assert_eq!(client.get_status(), AccountStatus::PaymentReceived);
+    }
+
+    #[test]
     #[should_panic(expected = "Error(Contract, #13)")]
     fn test_duplicate_asset() {
         let env = Env::default();
@@ -128,8 +285,18 @@ mod test {
         let recovery = Address::generate(&env);
         let asset = Address::generate(&env);
         let expiry_ledger = env.ledger().sequence() + 1000;
+        let claim_verifier_address = register_claim_verifier(&env);
+        let setup = setup_native_transfer(&env, &contract_id, BASE_RESERVE_STROOPS);
 
-        client.initialize(&creator, &expiry_ledger, &recovery);
+        initialize_ephemeral_account(
+            &env,
+            &client,
+            &creator,
+            expiry_ledger,
+            &recovery,
+            &claim_verifier_address,
+            &setup.nt_address,
+        );
         client.record_payment(&100, &asset);
         client.record_payment(&50, &asset);
     }
@@ -145,8 +312,18 @@ mod test {
         let creator = Address::generate(&env);
         let recovery = Address::generate(&env);
         let expiry_ledger = env.ledger().sequence() + 1000;
+        let claim_verifier_address = register_claim_verifier(&env);
+        let setup = setup_native_transfer(&env, &contract_id, BASE_RESERVE_STROOPS);
 
-        client.initialize(&creator, &expiry_ledger, &recovery);
+        initialize_ephemeral_account(
+            &env,
+            &client,
+            &creator,
+            expiry_ledger,
+            &recovery,
+            &claim_verifier_address,
+            &setup.nt_address,
+        );
 
         for i in 0..10 {
             let asset = Address::generate(&env);
@@ -169,15 +346,25 @@ mod test {
         let recovery = Address::generate(&env);
         let destination = Address::generate(&env);
         let expiry_ledger = env.ledger().sequence() + 1000;
+        let claim_verifier_address = register_claim_verifier(&env);
+        let setup = setup_native_transfer(&env, &contract_id, BASE_RESERVE_STROOPS);
 
-        client.initialize(&creator, &expiry_ledger, &recovery);
+        initialize_ephemeral_account(
+            &env,
+            &client,
+            &creator,
+            expiry_ledger,
+            &recovery,
+            &claim_verifier_address,
+            &setup.nt_address,
+        );
 
         let asset1 = Address::generate(&env);
         let asset2 = Address::generate(&env);
         client.record_payment(&100, &asset1);
         client.record_payment(&200, &asset2);
 
-        let auth_sig = BytesN::from_array(&env, &[0u8; 64]);
+        let auth_sig = sign_sweep_authorization(&env, &claim_verifier_address, &destination);
         client.sweep(&destination, &auth_sig);
 
         assert_eq!(client.get_status(), AccountStatus::Swept);
@@ -205,11 +392,21 @@ mod test {
         let destination = Address::generate(&env);
         let asset = Address::generate(&env);
         let expiry_ledger = env.ledger().sequence() + 1000;
+        let claim_verifier_address = register_claim_verifier(&env);
+        let setup = setup_native_transfer(&env, &contract_id, BASE_RESERVE_STROOPS);
 
-        client.initialize(&creator, &expiry_ledger, &recovery);
+        initialize_ephemeral_account(
+            &env,
+            &client,
+            &creator,
+            expiry_ledger,
+            &recovery,
+            &claim_verifier_address,
+            &setup.nt_address,
+        );
         client.record_payment(&100, &asset);
 
-        let auth_sig = BytesN::from_array(&env, &[0u8; 64]);
+        let auth_sig = sign_sweep_authorization(&env, &claim_verifier_address, &destination);
         client.sweep(&destination, &auth_sig);
 
         assert_eq!(client.get_reserve_remaining(), 0);
@@ -240,16 +437,27 @@ mod test {
         let destination = Address::generate(&env);
         let asset = Address::generate(&env);
         let expiry_ledger = env.ledger().sequence() + 1000;
-
-        client.initialize(&creator, &expiry_ledger, &recovery);
-        client.record_payment(&100, &asset);
+        let claim_verifier_address = register_claim_verifier(&env);
 
         let initial_available = 250_000_000i128;
+        let setup = setup_native_transfer(&env, &contract_id, initial_available);
+
+        initialize_ephemeral_account(
+            &env,
+            &client,
+            &creator,
+            expiry_ledger,
+            &recovery,
+            &claim_verifier_address,
+            &setup.nt_address,
+        );
+        client.record_payment(&100, &asset);
+
         env.as_contract(&contract_id, || {
             storage::set_available_reserve(&env, initial_available);
         });
 
-        let auth_sig = BytesN::from_array(&env, &[0u8; 64]);
+        let auth_sig = sign_sweep_authorization(&env, &claim_verifier_address, &destination);
         client.sweep(&destination, &auth_sig);
 
         let expected_remaining = BASE_RESERVE_STROOPS - initial_available;
@@ -268,6 +476,9 @@ mod test {
         assert_eq!(no_balance_reclaim, 0);
         assert_eq!(client.get_reserve_remaining(), expected_remaining);
         assert!(!client.is_reserve_reclaimed());
+
+        // Mint remaining tokens so the final reclaim transfer can succeed
+        StellarAssetClient::new(&env, &setup.token_address).mint(&contract_id, &expected_remaining);
 
         env.as_contract(&contract_id, || {
             storage::set_available_reserve(&env, expected_remaining);
@@ -296,11 +507,21 @@ mod test {
         let destination = Address::generate(&env);
         let asset = Address::generate(&env);
         let expiry_ledger = env.ledger().sequence() + 1000;
+        let claim_verifier_address = register_claim_verifier(&env);
+        let setup = setup_native_transfer(&env, &contract_id, BASE_RESERVE_STROOPS);
 
-        client.initialize(&creator, &expiry_ledger, &recovery);
+        initialize_ephemeral_account(
+            &env,
+            &client,
+            &creator,
+            expiry_ledger,
+            &recovery,
+            &claim_verifier_address,
+            &setup.nt_address,
+        );
         client.record_payment(&100, &asset);
 
-        let auth_sig = BytesN::from_array(&env, &[0u8; 64]);
+        let auth_sig = sign_sweep_authorization(&env, &claim_verifier_address, &destination);
         client.sweep(&destination, &auth_sig);
 
         let reserve_events_before = client.get_reserve_reclaim_event_count();

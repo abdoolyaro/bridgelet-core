@@ -1,14 +1,14 @@
 #![no_std]
+use claim_verifier::ClaimVerifierContractClient as ClaimVerifierClient;
 
 mod authorization;
 mod errors;
 mod storage;
-// mod transfers;
+mod transfers;
 
 use ephemeral_account::EphemeralAccountContractClient as EphemeralAccountClient;
 use soroban_sdk::{contract, contractimpl, contracttype, Address, BytesN, Env};
 
-use authorization::AuthContext;
 use bridgelet_shared::AccountStatus;
 pub use errors::Error;
 
@@ -30,17 +30,18 @@ impl SweepController {
         env: Env,
         authorized_signer: BytesN<32>,
         authorized_destination: Option<Address>,
+        creator: Address,
+        native_transfer_address: Address,
+        native_asset_address: Address,
+        claim_verifier_address: Address,
     ) -> Result<(), Error> {
         // Check if already initialized
         if storage::get_authorized_signer(&env).is_some() {
             return Err(Error::AuthorizationFailed);
         }
 
-        // Store the creator address
-        // In Soroban SDK 22.0.0, we need to pass creator as a parameter
-        // For now, we'll use the contract address as a placeholder
-        // TODO: Update to accept creator as parameter if needed
-        let creator = env.current_contract_address();
+        // Verify and store the creator address
+        creator.require_auth();
         storage::set_creator(&env, &creator);
 
         // Store the authorized signer public key
@@ -48,6 +49,9 @@ impl SweepController {
 
         // Initialize the sweep nonce to 0
         storage::init_sweep_nonce(&env);
+        storage::set_native_transfer_address(&env, &native_transfer_address);
+        storage::set_native_asset_address(&env, &native_asset_address);
+        storage::set_claim_verifier_address(&env, &claim_verifier_address);
 
         // Store authorized destination if provided
         if let Some(destination) = authorized_destination {
@@ -85,15 +89,14 @@ impl SweepController {
             }
         }
 
-        // Verify authorization
-        let auth_ctx = AuthContext::new(
-            ephemeral_account.clone(),
-            destination.clone(),
-            auth_signature.clone(),
-        );
-        auth_ctx.verify(&env)?;
+        // Verify authorization via claim_verifier contract
+        let claim_verifier_address =
+            storage::get_claim_verifier_address(&env).ok_or(Error::AuthorizationFailed)?;
+        let verifier = ClaimVerifierClient::new(&env, &claim_verifier_address);
+        let nonce = storage::get_sweep_nonce(&env);
+        verifier.verify(&destination, &nonce, &auth_signature);
 
-        // Increment nonce after successful verification to prevent replay attacks
+        // Increment nonce after successful verification
         authorization::increment_nonce(&env);
 
         // Call ephemeral account contract to validate and authorize sweep
@@ -116,15 +119,16 @@ impl SweepController {
             return Err(Error::AccountNotReady);
         }
 
-        // Execute the actual token transfer
-        // Note: In production, the ephemeral account would need to authorize this transfer
-        // let transfer_ctx = TransferContext::new(
-        //     info.payment_asset,
-        //     ephemeral_account.clone(),
-        //     destination.clone(),
-        //     amount,
-        // );
-        // transfer_ctx.execute(&env)?;
+        // Execute the actual token transfer for each payment asset
+        for payment in info.payments.iter() {
+            let transfer_ctx = transfers::TransferContext::new(
+                payment.asset.clone(),
+                ephemeral_account.clone(),
+                destination.clone(),
+                payment.amount,
+            );
+            transfer_ctx.execute(&env)?;
+        }
 
         // Emit sweep executed event
         emit_sweep_completed(&env, ephemeral_account, destination, amount);
