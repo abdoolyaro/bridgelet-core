@@ -8,7 +8,6 @@ pub enum DataKey {
     Creator,
     ExpiryLedger,
     RecoveryAddress,
-    ClaimVerifierAddress,
     Payments,
     Status,
     SweptTo,
@@ -18,7 +17,6 @@ pub enum DataKey {
     LastSweepId,
     ReserveEventCount,
     LastReserveEvent,
-    NativeTransferAddress,
 }
 
 // Initialization
@@ -58,22 +56,6 @@ pub fn set_recovery_address(env: &Env, address: &Address) {
     env.storage()
         .instance()
         .set(&DataKey::RecoveryAddress, address);
-}
-
-pub fn set_native_transfer_address(env: &Env, address: &Address) {
-    env.storage()
-        .instance()
-        .set(&DataKey::NativeTransferAddress, address);
-}
-
-pub fn set_claim_verifier_address(env: &Env, address: &Address) {
-    env.storage()
-        .instance()
-        .set(&DataKey::ClaimVerifierAddress, address);
-}
-
-pub fn get_claim_verifier_address(env: &Env) -> Option<Address> {
-    env.storage().instance().get(&DataKey::ClaimVerifierAddress)
 }
 
 pub fn get_recovery_address(env: &Env) -> Address {
@@ -221,10 +203,4 @@ pub fn set_last_reserve_event(env: &Env, event: &ReserveReclaimed) {
 
 pub fn get_last_reserve_event(env: &Env) -> Option<ReserveReclaimed> {
     env.storage().instance().get(&DataKey::LastReserveEvent)
-}
-
-pub fn get_native_transfer_address(env: &Env) -> Option<Address> {
-    env.storage()
-        .instance()
-        .get(&DataKey::NativeTransferAddress)
 }

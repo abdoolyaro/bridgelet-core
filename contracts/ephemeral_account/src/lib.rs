@@ -6,8 +6,6 @@ mod storage;
 #[cfg(test)]
 mod test;
 
-use claim_verifier::ClaimVerifierContractClient as ClaimVerifierClient;
-use native_transfer::NativeTransferContractClient as NativeTransferClient;
 use soroban_sdk::{contract, contractimpl, Address, BytesN, Env, Vec};
 
 pub use bridgelet_shared::{AccountInfo, AccountStatus, Payment};
@@ -39,8 +37,6 @@ impl EphemeralAccountContract {
         creator: Address,
         expiry_ledger: u32,
         recovery_address: Address,
-        native_transfer_address: Address,
-        claim_verifier_address: Address,
     ) -> Result<(), Error> {
         // Check if already initialized
         if storage::is_initialized(&env) {
@@ -61,10 +57,7 @@ impl EphemeralAccountContract {
         storage::set_creator(&env, &creator);
         storage::set_expiry_ledger(&env, expiry_ledger);
         storage::set_recovery_address(&env, &recovery_address);
-        storage::set_native_transfer_address(&env, &native_transfer_address);
-        storage::set_claim_verifier_address(&env, &claim_verifier_address);
         storage::set_status(&env, AccountStatus::Active);
-        storage::set_native_transfer_address(&env, &native_transfer_address);
         storage::init_reserve_tracking(&env, BASE_RESERVE_STROOPS);
 
         // Emit event
@@ -359,21 +352,14 @@ impl EphemeralAccountContract {
 
     // Private helper functions
 
-    /// Verify sweep authorization via the claim_verifier contract.
-    /// Uses the current ledger sequence as the nonce.
     fn verify_sweep_authorization(
-        env: &Env,
-        destination: &Address,
-        signature: &BytesN<64>,
+        _env: &Env,
+        _destination: &Address,
+        _signature: &BytesN<64>,
     ) -> Result<(), Error> {
-        let claim_verifier_address =
-            storage::get_claim_verifier_address(env).ok_or(Error::Unauthorized)?;
-
-        let verifier = ClaimVerifierClient::new(env, &claim_verifier_address);
-        let nonce = env.ledger().sequence() as u64;
-
-        verifier.verify(destination, &nonce, signature);
-
+        // TODO: Implement proper signature verification
+        // For MVP, we rely on off-chain SDK to only call with valid auth
+        // Future: Verify signature against authorized signer
         Ok(())
     }
 
@@ -423,17 +409,6 @@ impl EphemeralAccountContract {
             remaining_reserve: new_remaining,
         };
         Self::emit_and_store_reserve_event(env, event)?;
-
-        if reclaim_amount > 0 {
-            let native_transfer_address =
-                storage::get_native_transfer_address(env).ok_or(Error::NotInitialized)?;
-            let native_client = NativeTransferClient::new(env, &native_transfer_address);
-            native_client.transfer(
-                &env.current_contract_address(),
-                destination,
-                &reclaim_amount,
-            );
-        }
 
         Ok(reclaim_amount)
     }

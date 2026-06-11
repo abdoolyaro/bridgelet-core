@@ -5,7 +5,4 @@ members = [
     "contracts/sweep_controller",
     "contracts/shared",
     "contracts/reserve_contract",
-    "contracts/native_transfer",
-    "contracts/account_factory",
-    "contracts/claim_verifier",
 ]
