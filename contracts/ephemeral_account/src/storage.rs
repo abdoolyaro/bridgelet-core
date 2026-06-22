@@ -214,7 +214,5 @@ pub fn set_authorized_controller(env: &Env, controller: &Address) {
 }
 
 pub fn get_authorized_controller(env: &Env) -> Option<Address> {
-    env.storage()
-        .instance()
-        .get(&DataKey::AuthorizedController)
+    env.storage().instance().get(&DataKey::AuthorizedController)
 }
