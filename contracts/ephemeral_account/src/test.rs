@@ -460,4 +460,27 @@ mod test {
         // Second sweep attempt — should return AlreadySwept (#7)
         client.sweep(&destination, &auth_sig);
     }
+
+    #[test]
+    #[should_panic(expected = "Error(Contract, #5)")]
+    fn test_initialize_with_expired_ledger_rejected() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let contract_id = env.register(EphemeralAccountContract, ());
+        let client = EphemeralAccountContractClient::new(&env, &contract_id);
+
+        let creator = Address::generate(&env);
+        let recovery = Address::generate(&env);
+        let controller = Address::generate(&env);
+
+        // Advance ledger so we can clearly pass a past expiry
+        env.ledger().with_mut(|l| {
+            l.sequence_number = 100;
+        });
+
+        // expiry_ledger <= current ledger (50 <= 100) -- should return InvalidExpiry (#5)
+        let expired_ledger = 50u32;
+        client.initialize(&creator, &expired_ledger, &recovery, &controller);
+    }
 }
